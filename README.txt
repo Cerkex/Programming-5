@@ -1,4 +1,5 @@
-Two-Person Word Guessing Game
+Word Guessing Game
+NEPTUN: XW87E6
 =============================
 
 Structure:
