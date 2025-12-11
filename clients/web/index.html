@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Two-Person Word Guessing Game - Web Client</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 600px; margin: 20px auto; }
+    #log { white-space: pre-line; border: 1px solid #ccc; padding: 10px; min-height: 120px; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <h1>Two-Person Word Guessing Game</h1>
+
+  <div id="auth">
+    <label>Username: <input id="username" /></label>
+    <button id="loginBtn">Login & Join Room</button>
+  </div>
+
+  <div id="game" class="hidden">
+    <p><b>Room:</b> <span id="roomId"></span></p>
+    <p><b>Word:</b> <span id="word"></span></p>
+    <p><b>Remaining Attempts:</b> <span id="attempts"></span></p>
+    <p><b>Current Turn:</b> <span id="turn"></span></p>
+    <p><b>Winner:</b> <span id="winner"></span></p>
+
+    <div id="inputArea">
+      <input id="guessInput" placeholder="Letter or word" />
+      <button id="guessBtn">Send Guess</button>
+    </div>
+  </div>
+
+  <h3>Log</h3>
+  <div id="log"></div>
+
+  <script>
+    const USER_SERVICE_URL = "http://localhost:4001";
+    const ROOM_SERVICE_URL = "http://localhost:4002";
+    const GAME_RULES_HTTP_URL = "http://localhost:4003";
+    const GAME_RULES_WS_URL = GAME_RULES_HTTP_URL.replace("http", "ws");
+
+    const logEl = document.getElementById("log");
+    function log(msg) {
+      logEl.textContent += msg + "\n";
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    let currentUser = null;
+    let currentRoomId = null;
+    let ws = null;
+
+    document.getElementById("loginBtn").onclick = async () => {
+      const username = document.getElementById("username").value.trim();
+      if (!username) {
+        alert("Username required");
+        return;
+      }
+      log("Logging in as " + username + "...");
+      const resp = await fetch(USER_SERVICE_URL + "/users/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username })
+      });
+      currentUser = await resp.json();
+      log("Logged in: " + JSON.stringify(currentUser));
+
+      const rResp = await fetch(ROOM_SERVICE_URL + "/rooms/join", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: currentUser.userId })
+      });
+      const room = await rResp.json();
+      currentRoomId = room.roomId;
+      log("Joined room: " + JSON.stringify(room));
+
+      document.getElementById("roomId").textContent = currentRoomId;
+      document.getElementById("auth").classList.add("hidden");
+      document.getElementById("game").classList.remove("hidden");
+
+      ws = new WebSocket(GAME_RULES_WS_URL);
+      ws.onopen = () => {
+        log("WebSocket connected");
+        ws.send(JSON.stringify({ type: "SUBSCRIBE", roomId: currentRoomId }));
+      };
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.event !== "GAME_UPDATE" || msg.roomId !== currentRoomId) return;
+
+        document.getElementById("word").textContent = msg.maskedWord;
+        document.getElementById("attempts").textContent = msg.remainingAttempts;
+        document.getElementById("turn").textContent = msg.currentTurnUserId;
+        document.getElementById("winner").textContent = msg.winnerUserId || "-";
+
+        log("GAME UPDATE: " + JSON.stringify(msg));
+
+        const inputArea = document.getElementById("inputArea");
+        if (msg.winnerUserId || msg.remainingAttempts === 0) {
+          inputArea.style.display = "none";
+        } else if (msg.currentTurnUserId === currentUser.userId) {
+          inputArea.style.display = "block";
+        } else {
+          inputArea.style.display = "none";
+        }
+      };
+      ws.onclose = () => log("WebSocket closed");
+      ws.onerror = (err) => log("WebSocket error: " + err.message);
+    };
+
+    document.getElementById("guessBtn").onclick = async () => {
+      const guess = document.getElementById("guessInput").value.trim();
+      if (!guess) return;
+      log("Sending guess: " + guess);
+      await fetch(GAME_RULES_HTTP_URL + "/game/move", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          roomId: currentRoomId,
+          userId: currentUser.userId,
+          guess
+        })
+      });
+      document.getElementById("guessInput").value = "";
+    };
+  </script>
+</body>
+</html>
